@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Contact {
+  id                String    @id @default(cuid())
+  displayName       String
+  photoUrl          String?
+  relationshipScore Float     @default(50)
+  lastInteraction   DateTime?
+  identities        String    @default("[]") // JSON array of {type, value} objects
+  tags              String    @default("[]") // JSON array of strings
+  notes             String?
+  archived          Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  messages Message[]
+
+  @@index([relationshipScore(sort: Desc)])
+  @@index([lastInteraction(sort: Desc)])
+  @@index([archived])
+}
+
+model Message {
+  id              String    @id @default(cuid())
+  contactId       String
+  source          String    // imessage, whatsapp, facebook, email, phone
+  type            String    @default("message") // message, call, email
+  sourceMessageId String?   // Original ID from source system
+  content         String?
+  direction       String    // inbound, outbound
+  durationSeconds Int?      // For calls
+  sentimentScore  Float?    // -1 to 1
+  sentimentLabel  String?   // positive, negative, neutral
+  timestamp       DateTime
+  metadata        String    @default("{}") // JSON object
+  createdAt       DateTime  @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([source, sourceMessageId])
+  @@index([contactId, timestamp(sort: Desc)])
+  @@index([source])
+  @@index([timestamp(sort: Desc)])
+}
+
+model SyncState {
+  id            String    @id @default(cuid())
+  source        String    @unique // imessage, whatsapp, facebook, email, phone
+  lastCursor    String?   // Timestamp or ID for incremental sync
+  recordsSynced Int       @default(0)
+  lastSuccess   DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model QueueItem {
+  id          String    @id @default(cuid())
+  type        String    // import, nlp, dedup
+  payload     String    // JSON payload
+  attempts    Int       @default(0)
+  scheduledAt DateTime  @default(now())
+  completedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([scheduledAt])
+}

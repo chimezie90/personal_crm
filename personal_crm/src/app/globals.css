@@ -1,0 +1,168 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  /* Warm Brutalism design system colors */
+  --color-cream: #FAF8F5;
+
+  --color-warmGray-50: #FAFAF9;
+  --color-warmGray-100: #F5F3F0;
+  --color-warmGray-200: #E7E4E0;
+  --color-warmGray-300: #D4D0CA;
+  --color-warmGray-400: #A8A29E;
+  --color-warmGray-500: #78716C;
+  --color-warmGray-600: #57534E;
+  --color-warmGray-700: #44403C;
+  --color-warmGray-800: #292524;
+  --color-warmGray-900: #2C2A27;
+
+  --color-terracotta-50: #FCF4F1;
+  --color-terracotta-100: #F9E8E2;
+  --color-terracotta-200: #F2CEC2;
+  --color-terracotta-300: #E8A997;
+  --color-terracotta-400: #DB7D5E;
+  --color-terracotta-500: #C65D3B;
+  --color-terracotta-600: #B24A2E;
+  --color-terracotta-700: #943D27;
+  --color-terracotta-800: #793426;
+  --color-terracotta-900: #642F24;
+  --color-terracotta: #C65D3B;
+
+  --color-sage-50: #F5F7F4;
+  --color-sage-100: #E8ECE5;
+  --color-sage-200: #D2DACE;
+  --color-sage-300: #B1C0A8;
+  --color-sage-400: #8FA27E;
+  --color-sage-500: #7B8F6E;
+  --color-sage-600: #5F7253;
+  --color-sage-700: #4C5B44;
+  --color-sage-800: #3F4A39;
+  --color-sage-900: #363F32;
+  --color-sage: #7B8F6E;
+
+  /* Font families */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Box shadows */
+  --shadow-brutal: 4px 4px 0 0 #2C2A27;
+  --shadow-brutal-sm: 2px 2px 0 0 #2C2A27;
+  --shadow-brutal-lg: 6px 6px 0 0 #2C2A27;
+  --shadow-brutal-terracotta: 4px 4px 0 0 #C65D3B;
+}
+
+@layer base {
+  :root {
+    --background: #FAF8F5;
+    --foreground: #2C2A27;
+  }
+
+  body {
+    background-color: var(--color-cream);
+    color: var(--color-warmGray-900);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    background-color: var(--color-terracotta);
+    color: white;
+    font-family: var(--font-display);
+    font-weight: 500;
+    padding: 0.5rem 1rem;
+    border: 2px solid var(--color-warmGray-900);
+    box-shadow: var(--shadow-brutal);
+    transition: all 150ms;
+  }
+
+  .btn-primary:hover {
+    box-shadow: none;
+    transform: translate(4px, 4px);
+  }
+
+  .btn-primary:active {
+    background-color: var(--color-terracotta-600);
+  }
+
+  .btn-secondary {
+    background-color: var(--color-cream);
+    color: var(--color-warmGray-900);
+    font-family: var(--font-display);
+    font-weight: 500;
+    padding: 0.5rem 1rem;
+    border: 2px solid var(--color-warmGray-900);
+    box-shadow: var(--shadow-brutal);
+    transition: all 150ms;
+  }
+
+  .btn-secondary:hover {
+    box-shadow: none;
+    transform: translate(4px, 4px);
+  }
+
+  .btn-secondary:active {
+    background-color: var(--color-warmGray-100);
+  }
+
+  .card {
+    background-color: var(--color-cream);
+    border: 2px solid var(--color-warmGray-900);
+    padding: 1rem;
+  }
+
+  .card-hover {
+    background-color: var(--color-cream);
+    border: 2px solid var(--color-warmGray-900);
+    padding: 1rem;
+    transition: all 150ms;
+  }
+
+  .card-hover:hover {
+    box-shadow: var(--shadow-brutal);
+    transform: translate(-2px, -2px);
+  }
+
+  .input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background-color: white;
+    border: 2px solid var(--color-warmGray-900);
+    font-family: var(--font-body);
+    color: var(--color-warmGray-900);
+  }
+
+  .input::placeholder {
+    color: var(--color-warmGray-400);
+  }
+
+  .input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-terracotta);
+  }
+}
+
+/* Utility classes for the design system */
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-body {
+    font-family: var(--font-body);
+  }
+
+  .shadow-brutal {
+    box-shadow: var(--shadow-brutal);
+  }
+
+  .shadow-brutal-sm {
+    box-shadow: var(--shadow-brutal-sm);
+  }
+
+  .shadow-brutal-lg {
+    box-shadow: var(--shadow-brutal-lg);
+  }
+}
