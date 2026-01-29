@@ -6,10 +6,12 @@ import {
   syncContactNames,
   updateRelationshipScores,
 } from "@/actions/sync.actions";
+import { ImportDialog } from "@/components/import/import-dialog";
 
 export function DashboardActions() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [showImportDialog, setShowImportDialog] = useState(false);
 
   async function handleFullSync() {
     setIsSyncing(true);
@@ -51,17 +53,38 @@ export function DashboardActions() {
   }
 
   return (
-    <div className="flex items-center gap-4">
-      {status && (
-        <span className="text-sm text-warmGray-600">{status}</span>
-      )}
-      <button
-        onClick={handleFullSync}
-        disabled={isSyncing}
-        className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isSyncing ? "Syncing..." : "Sync Now"}
-      </button>
-    </div>
+    <>
+      <div className="flex items-center gap-4">
+        {status && (
+          <span className="text-sm text-warmGray-600">{status}</span>
+        )}
+        <button
+          onClick={() => setShowImportDialog(true)}
+          className="btn-secondary"
+        >
+          Import Data
+        </button>
+        <button
+          onClick={handleFullSync}
+          disabled={isSyncing}
+          className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isSyncing ? "Syncing..." : "Sync Now"}
+        </button>
+      </div>
+
+      <ImportDialog
+        isOpen={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        onImportComplete={(result) => {
+          if (result.success) {
+            setStatus(
+              `Imported ${result.messagesImported} messages, ${result.contactsCreated} contacts`
+            );
+            setTimeout(() => setStatus(null), 5000);
+          }
+        }}
+      />
+    </>
   );
 }

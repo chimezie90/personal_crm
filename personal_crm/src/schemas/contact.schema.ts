@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 export const identitySchema = z.object({
-  type: z.enum(["phone", "email", "group"]),
+  type: z.enum(["phone", "email", "group", "social"]),
   value: z.string(),
-  source: z.enum(["imessage", "whatsapp", "facebook", "email", "phone"]),
+  source: z.enum(["imessage", "whatsapp", "facebook", "instagram", "email", "phone"]),
 });
 
 export type Identity = z.infer<typeof identitySchema>;

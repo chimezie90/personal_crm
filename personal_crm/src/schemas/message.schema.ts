@@ -4,6 +4,7 @@ export const messageSourceSchema = z.enum([
   "imessage",
   "whatsapp",
   "facebook",
+  "instagram",
   "email",
   "phone",
 ]);
@@ -96,6 +97,7 @@ export function getSourceIcon(source: MessageSource): string {
     imessage: "💬",
     whatsapp: "📱",
     facebook: "👤",
+    instagram: "📷",
     email: "✉️",
     phone: "📞",
   };
@@ -110,6 +112,7 @@ export function getSourceLabel(source: MessageSource): string {
     imessage: "iMessage",
     whatsapp: "WhatsApp",
     facebook: "Facebook",
+    instagram: "Instagram",
     email: "Email",
     phone: "Phone",
   };

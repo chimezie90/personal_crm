@@ -4,6 +4,7 @@ export type DataSourceType =
   | "imessage"
   | "whatsapp"
   | "facebook"
+  | "instagram"
   | "email"
   | "phone";
 
