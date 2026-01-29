@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
+import { Prisma } from "@/generated/prisma/client";
 import { createConnector, ConnectorConfig } from "@/lib/connectors";
 import {
   findOrCreateContact,
@@ -338,29 +339,40 @@ export async function updateRelationshipScores(): Promise<{
   const contactIds = contacts.map(c => c.id);
   const now = new Date();
 
-  // Batch query: Get aggregated stats for all contacts in one query
-  const stats = await db.$queryRaw<
-    Array<{
-      contactId: string;
-      latestTimestamp: Date | null;
-      total: bigint;
-      inbound: bigint;
-      outbound: bigint;
-    }>
-  >`
-    SELECT
-      contactId,
-      MAX(timestamp) as latestTimestamp,
-      COUNT(*) as total,
-      SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound,
-      SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound
-    FROM Message
-    WHERE contactId IN (${contactIds.join("','").replace(/^/, "'").replace(/$/, "'")})
-    GROUP BY contactId
-  `;
+  // Batch query: Get aggregated stats for all contacts
+  // Chunk to avoid SQLite parameter limit (999)
+  const chunkSize = 500;
+  const statsMap = new Map<
+    string,
+    { contactId: string; latestTimestamp: Date | null; total: bigint; inbound: bigint; outbound: bigint }
+  >();
 
-  // Build a map for O(1) lookup
-  const statsMap = new Map(stats.map(s => [s.contactId, s]));
+  for (let i = 0; i < contactIds.length; i += chunkSize) {
+    const chunk = contactIds.slice(i, i + chunkSize);
+    const chunkStats = await db.$queryRaw<
+      Array<{
+        contactId: string;
+        latestTimestamp: Date | null;
+        total: bigint;
+        inbound: bigint;
+        outbound: bigint;
+      }>
+    >`
+      SELECT
+        contactId,
+        MAX(timestamp) as latestTimestamp,
+        COUNT(*) as total,
+        SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound,
+        SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound
+      FROM Message
+      WHERE contactId IN (${Prisma.join(chunk)})
+      GROUP BY contactId
+    `;
+
+    for (const stat of chunkStats) {
+      statsMap.set(stat.contactId, stat);
+    }
+  }
 
   // Prepare batch updates
   const updates: Array<{
