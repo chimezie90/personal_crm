@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { createConnector, ConnectorConfig } from "@/lib/connectors";
+import { isDataSourceType, DataSourceType } from "@/lib/connectors/types";
 import {
   findOrCreateContact,
   normalizeIdentifier,
@@ -29,10 +30,19 @@ export async function syncDataSource(sourceType: string): Promise<{
   messagesImported: number;
   error?: string;
 }> {
+  if (!isDataSourceType(sourceType)) {
+    return {
+      success: false,
+      contactsImported: 0,
+      messagesImported: 0,
+      error: `Invalid data source type: ${sourceType}`,
+    };
+  }
+
   const config: ConnectorConfig = {
     id: `${sourceType}-default`,
     name: sourceType,
-    type: sourceType as any,
+    type: sourceType,
     enabled: true,
     pollIntervalMs: 60000,
     config: {},
@@ -81,7 +91,7 @@ export async function syncDataSource(sourceType: string): Promise<{
     const contactIdMap = new Map<string, string>(); // identifier -> contact ID
 
     for await (const rawContact of connector.fetchContacts()) {
-      const contactId = await findOrCreateContact(rawContact, sourceType as any);
+      const contactId = await findOrCreateContact(rawContact, sourceType);
       const { normalized } = normalizeIdentifier(rawContact.identifier);
       contactIdMap.set(normalized, contactId);
       contactsImported++;
@@ -96,7 +106,7 @@ export async function syncDataSource(sourceType: string): Promise<{
     let maxMessageDate: Date | null = null;
     const messageBatch: Array<{
       contactId: string;
-      source: any;
+      source: DataSourceType;
       type: "message" | "call" | "email";
       sourceMessageId: string | null;
       content: string | null;
@@ -134,16 +144,16 @@ export async function syncDataSource(sourceType: string): Promise<{
           {
             identifier: rawMessage.senderIdentifier,
             displayName,
-            source: sourceType as any,
+            source: sourceType,
           },
-          sourceType as any
+          sourceType
         );
         contactIdMap.set(normalized, contactId);
       }
 
       messageBatch.push({
         contactId,
-        source: sourceType as any,
+        source: sourceType,
         type: rawMessage.type,
         sourceMessageId: rawMessage.sourceId,
         content: rawMessage.content,

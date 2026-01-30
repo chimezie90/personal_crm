@@ -10,31 +10,9 @@
  */
 
 /**
- * Query to get messages with handle information
- * The is_from_me column: 1 = outbound, 0 = inbound
- * The date column is in nanoseconds since 2001-01-01 (Mac Absolute Time)
- */
-export const GET_MESSAGES_QUERY = `
-  SELECT
-    m.ROWID as id,
-    m.guid as guid,
-    m.text as content,
-    m.date as date,
-    m.is_from_me as is_from_me,
-    m.service as service,
-    h.id as handle_id,
-    h.service as handle_service
-  FROM message m
-  LEFT JOIN handle h ON m.handle_id = h.ROWID
-  WHERE m.text IS NOT NULL
-    AND m.text != ''
-    AND m.date > ?
-  ORDER BY m.date ASC
-  LIMIT ?
-`;
-
-/**
  * Query to get messages for incremental sync
+ * For sent messages (is_from_me=1), handle_id is often 0, so we need to
+ * get the handle through the chat_message_join and chat_handle_join tables
  */
 export const GET_MESSAGES_SINCE_QUERY = `
   SELECT
@@ -44,13 +22,23 @@ export const GET_MESSAGES_SINCE_QUERY = `
     m.date as date,
     m.is_from_me as is_from_me,
     m.service as service,
-    h.id as handle_id,
-    h.service as handle_service
+    COALESCE(h.id, ch.id) as handle_id,
+    COALESCE(h.service, ch.service) as handle_service,
+    c.ROWID as chat_rowid,
+    c.guid as chat_guid,
+    c.chat_identifier as chat_identifier,
+    c.display_name as chat_display_name,
+    COUNT(DISTINCT chj.handle_id) as chat_handle_count
   FROM message m
   LEFT JOIN handle h ON m.handle_id = h.ROWID
+  LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+  LEFT JOIN chat c ON cmj.chat_id = c.ROWID
+  LEFT JOIN chat_handle_join chj ON c.ROWID = chj.chat_id
+  LEFT JOIN handle ch ON chj.handle_id = ch.ROWID
   WHERE m.text IS NOT NULL
     AND m.text != ''
     AND m.date > ?
+  GROUP BY m.ROWID
   ORDER BY m.date ASC
 `;
 

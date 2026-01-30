@@ -10,6 +10,24 @@ import {
 } from "@/lib/services/deduplication-service";
 import { createMessages } from "@/lib/services/message-service";
 import { unlink } from "fs/promises";
+import { tmpdir } from "os";
+import { join, resolve } from "path";
+
+/**
+ * Secure upload directory - must match the one in /api/import/route.ts
+ */
+const UPLOAD_DIR = join(tmpdir(), "personal-crm-imports");
+
+/**
+ * Validate that a file path is within the expected upload directory.
+ * Prevents path traversal attacks that could read arbitrary files.
+ */
+function validateFilePath(filePath: string): void {
+  const resolvedPath = resolve(filePath);
+  if (!resolvedPath.startsWith(UPLOAD_DIR)) {
+    throw new Error("Invalid file path: must be within upload directory");
+  }
+}
 
 // Import connectors to register them
 import "@/lib/connectors/whatsapp/connector";
@@ -34,6 +52,9 @@ export async function importWhatsApp(
   chatName: string,
   userIdentifier?: string
 ): Promise<ImportResult> {
+  // Validate file path to prevent arbitrary file access
+  validateFilePath(filePath);
+
   const { parseWhatsAppExport, extractWhatsAppContacts } = await import(
     "@/lib/connectors/whatsapp/parser"
   );
@@ -168,6 +189,9 @@ export async function importFacebook(
   exportPath: string,
   userName?: string
 ): Promise<ImportResult> {
+  // Validate file path to prevent arbitrary file access
+  validateFilePath(exportPath);
+
   const { parseFacebookExport, extractFacebookContacts } = await import(
     "@/lib/connectors/facebook/parser"
   );
@@ -294,6 +318,9 @@ export async function importInstagram(
   exportPath: string,
   userName?: string
 ): Promise<ImportResult> {
+  // Validate file path to prevent arbitrary file access
+  validateFilePath(exportPath);
+
   const { parseInstagramExport, extractInstagramContacts } = await import(
     "@/lib/connectors/instagram/parser"
   );

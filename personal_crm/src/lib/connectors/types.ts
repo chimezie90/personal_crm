@@ -1,12 +1,12 @@
 import { Result } from "@/lib/result";
 
-export type DataSourceType =
-  | "imessage"
-  | "whatsapp"
-  | "facebook"
-  | "instagram"
-  | "email"
-  | "phone";
+const DATA_SOURCE_TYPES = ["imessage", "whatsapp", "facebook", "instagram", "email", "phone"] as const;
+
+export type DataSourceType = (typeof DATA_SOURCE_TYPES)[number];
+
+export function isDataSourceType(s: string): s is DataSourceType {
+  return DATA_SOURCE_TYPES.includes(s as DataSourceType);
+}
 
 export interface ConnectorConfig {
   id: string;
@@ -54,13 +54,6 @@ export interface MessageProvider {
  */
 export interface ContactProvider {
   fetchContacts(): AsyncGenerator<RawContact>;
-}
-
-/**
- * Capability interface for connectors that provide call history
- */
-export interface CallProvider {
-  fetchCalls(since?: Date): AsyncGenerator<RawMessage>;
 }
 
 /**

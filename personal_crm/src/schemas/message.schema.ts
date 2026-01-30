@@ -47,7 +47,8 @@ export type Message = z.infer<typeof messageSchema>;
 export function parseMetadata(json: string): Record<string, unknown> {
   try {
     return JSON.parse(json);
-  } catch {
+  } catch (error) {
+    console.warn(`[parseMetadata] Failed to parse JSON: ${json.slice(0, 100)}...`, error);
     return {};
   }
 }

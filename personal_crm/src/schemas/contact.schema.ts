@@ -63,7 +63,8 @@ export function parseIdentities(json: string): Identity[] {
   try {
     const parsed = JSON.parse(json);
     return z.array(identitySchema).parse(parsed);
-  } catch {
+  } catch (error) {
+    console.warn(`[parseIdentities] Failed to parse JSON: ${json.slice(0, 100)}...`, error);
     return [];
   }
 }
@@ -75,7 +76,8 @@ export function parseTags(json: string): string[] {
   try {
     const parsed = JSON.parse(json);
     return z.array(z.string()).parse(parsed);
-  } catch {
+  } catch (error) {
+    console.warn(`[parseTags] Failed to parse JSON: ${json.slice(0, 100)}...`, error);
     return [];
   }
 }

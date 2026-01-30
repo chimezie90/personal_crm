@@ -87,12 +87,3 @@ export abstract class BaseConnector implements MessageProvider, ContactProvider 
    */
   abstract fetchContacts(): AsyncGenerator<RawContact>;
 }
-
-/**
- * Type guard to check if a connector supports calls
- */
-export function supportssCalls(
-  connector: BaseConnector
-): connector is BaseConnector & { fetchCalls: (since?: Date) => AsyncGenerator<RawMessage> } {
-  return "fetchCalls" in connector && typeof (connector as any).fetchCalls === "function";
-}
