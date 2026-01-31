@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { DataSourceType } from "@/lib/connectors/types";
+import { DataSourceType, RawContact, RawMessage } from "@/lib/connectors/types";
 import {
   findOrCreateContact,
   normalizeIdentifier,
@@ -12,11 +12,17 @@ import { createMessages } from "@/lib/services/message-service";
 import { unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
+import { requireAuth } from "@/lib/auth";
 
 /**
  * Secure upload directory - must match the one in /api/import/route.ts
  */
 const UPLOAD_DIR = join(tmpdir(), "personal-crm-imports");
+
+/**
+ * Batch size for message inserts
+ */
+const MESSAGE_BATCH_SIZE = 500;
 
 /**
  * Validate that a file path is within the expected upload directory.
@@ -29,11 +35,6 @@ function validateFilePath(filePath: string): void {
   }
 }
 
-// Import connectors to register them
-import "@/lib/connectors/whatsapp/connector";
-import "@/lib/connectors/facebook/connector";
-import "@/lib/connectors/instagram/connector";
-
 /**
  * Import result type
  */
@@ -45,32 +46,81 @@ export interface ImportResult {
 }
 
 /**
- * Process a WhatsApp export file
+ * Configuration for a data source import
  */
-export async function importWhatsApp(
+interface ImportConfig<TOptions = unknown> {
+  /** The data source type identifier */
+  source: DataSourceType;
+  /** Function that extracts contacts from the export */
+  extractContacts: (path: string, options: TOptions) => AsyncGenerator<RawContact>;
+  /** Function that parses messages from the export */
+  parseMessages: (path: string, options: TOptions) => AsyncGenerator<RawMessage>;
+  /** Optional: extract display name from message metadata for on-the-fly contact creation */
+  getDisplayNameFromMessage?: (msg: RawMessage) => string | undefined;
+  /** Whether to clean up the file after import (default: false) */
+  cleanupFile?: boolean;
+  /** Log prefix for error messages */
+  logPrefix: string;
+}
+
+/**
+ * Message batch entry for createMessages
+ */
+type MessageBatchEntry = {
+  contactId: string;
+  source: DataSourceType;
+  type: "message" | "call" | "email";
+  sourceMessageId: string | null;
+  content: string | null;
+  direction: "inbound" | "outbound";
+  timestamp: Date;
+  metadata: Record<string, unknown>;
+};
+
+/**
+ * Generic import executor that handles the common import workflow:
+ * 1. Authentication check
+ * 2. File path validation
+ * 3. Identity index building
+ * 4. Contact extraction and creation
+ * 5. Message streaming and batch processing
+ * 6. Last interaction tracking
+ * 7. Cache revalidation
+ *
+ * @param config - Import configuration for the specific data source
+ * @param filePath - Path to the file/directory to import
+ * @param options - Source-specific options passed to extractContacts and parseMessages
+ */
+async function executeImport<TOptions>(
+  config: ImportConfig<TOptions>,
   filePath: string,
-  chatName: string,
-  userIdentifier?: string
+  options: TOptions
 ): Promise<ImportResult> {
-  // Validate file path to prevent arbitrary file access
+  const { source, extractContacts, parseMessages, getDisplayNameFromMessage, cleanupFile, logPrefix } = config;
+
+  // Step 1: Verify user is authenticated before processing import
+  try {
+    await requireAuth();
+  } catch (error) {
+    return {
+      success: false,
+      messagesImported: 0,
+      contactsCreated: 0,
+      error: error instanceof Error ? error.message : "Authentication required",
+    };
+  }
+
+  // Step 2: Validate file path to prevent arbitrary file access
   validateFilePath(filePath);
 
-  const { parseWhatsAppExport, extractWhatsAppContacts } = await import(
-    "@/lib/connectors/whatsapp/parser"
-  );
-
   try {
-    const source: DataSourceType = "whatsapp";
-
-    // Build identity index for faster lookups
+    // Step 3: Build identity index for faster lookups
     const identityIndex = await buildIdentityIndex();
     const contactIdMap = new Map<string, string>();
 
-    // First, extract and create contacts
+    // Step 4: Extract and create contacts
     let contactsCreated = 0;
-    for await (const rawContact of extractWhatsAppContacts(filePath, chatName, {
-      userIdentifier,
-    })) {
+    for await (const rawContact of extractContacts(filePath, options)) {
       const contactId = await findOrCreateContact(rawContact, source);
       const { normalized } = normalizeIdentifier(rawContact.identifier);
       contactIdMap.set(normalized, contactId);
@@ -78,33 +128,22 @@ export async function importWhatsApp(
       contactsCreated++;
     }
 
-    // Then, import messages in batches
+    // Step 5: Import messages in batches
     let messagesImported = 0;
-    const messageBatch: Array<{
-      contactId: string;
-      source: DataSourceType;
-      type: "message" | "call" | "email";
-      sourceMessageId: string | null;
-      content: string | null;
-      direction: "inbound" | "outbound";
-      timestamp: Date;
-      metadata: Record<string, unknown>;
-    }> = [];
-
+    const messageBatch: MessageBatchEntry[] = [];
     const lastInteractionMap = new Map<string, Date>();
 
-    for await (const rawMessage of parseWhatsAppExport(filePath, chatName, {
-      userIdentifier,
-    })) {
+    for await (const rawMessage of parseMessages(filePath, options)) {
       const { normalized } = normalizeIdentifier(rawMessage.senderIdentifier);
       let contactId = contactIdMap.get(normalized) || identityIndex.get(normalized);
 
       if (!contactId) {
         // Create contact on the fly
+        const displayName = getDisplayNameFromMessage?.(rawMessage);
         contactId = await findOrCreateContact(
           {
             identifier: rawMessage.senderIdentifier,
-            displayName: rawMessage.metadata?.originalAuthor as string | undefined,
+            displayName,
             source,
           },
           source
@@ -124,14 +163,14 @@ export async function importWhatsApp(
         metadata: rawMessage.metadata || {},
       });
 
-      // Track last interaction
+      // Step 6: Track last interaction
       const existing = lastInteractionMap.get(contactId);
       if (!existing || rawMessage.timestamp > existing) {
         lastInteractionMap.set(contactId, rawMessage.timestamp);
       }
 
-      // Batch insert every 500 messages
-      if (messageBatch.length >= 500) {
+      // Batch insert every MESSAGE_BATCH_SIZE messages
+      if (messageBatch.length >= MESSAGE_BATCH_SIZE) {
         const count = await createMessages(messageBatch);
         messagesImported += count;
         messageBatch.length = 0;
@@ -156,13 +195,16 @@ export async function importWhatsApp(
       );
     }
 
-    // Clean up the temp file
-    try {
-      await unlink(filePath);
-    } catch {
-      // Ignore cleanup errors
+    // Clean up temp file if requested
+    if (cleanupFile) {
+      try {
+        await unlink(filePath);
+      } catch {
+        // Ignore cleanup errors
+      }
     }
 
+    // Step 7: Revalidate cache
     revalidatePath("/");
     revalidatePath("/contacts");
 
@@ -172,7 +214,7 @@ export async function importWhatsApp(
       contactsCreated,
     };
   } catch (error) {
-    console.error("[import-whatsapp]", error);
+    console.error(`[${logPrefix}]`, error);
     return {
       success: false,
       messagesImported: 0,
@@ -180,6 +222,38 @@ export async function importWhatsApp(
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+/**
+ * Process a WhatsApp export file
+ */
+export async function importWhatsApp(
+  filePath: string,
+  chatName: string,
+  userIdentifier?: string
+): Promise<ImportResult> {
+  const { parseWhatsAppExport, extractWhatsAppContacts } = await import(
+    "@/lib/connectors/whatsapp/parser"
+  );
+
+  // Create wrapper functions that include chatName in the options
+  type WhatsAppOptions = { chatName: string; userIdentifier?: string };
+  const options: WhatsAppOptions = { chatName, userIdentifier };
+
+  return executeImport<WhatsAppOptions>(
+    {
+      source: "whatsapp",
+      extractContacts: (path, opts) =>
+        extractWhatsAppContacts(path, opts.chatName, { userIdentifier: opts.userIdentifier }),
+      parseMessages: (path, opts) =>
+        parseWhatsAppExport(path, opts.chatName, { userIdentifier: opts.userIdentifier }),
+      getDisplayNameFromMessage: (msg) => msg.metadata?.originalAuthor as string | undefined,
+      cleanupFile: true,
+      logPrefix: "import-whatsapp",
+    },
+    filePath,
+    options
+  );
 }
 
 /**
@@ -189,126 +263,23 @@ export async function importFacebook(
   exportPath: string,
   userName?: string
 ): Promise<ImportResult> {
-  // Validate file path to prevent arbitrary file access
-  validateFilePath(exportPath);
-
   const { parseFacebookExport, extractFacebookContacts } = await import(
     "@/lib/connectors/facebook/parser"
   );
 
-  try {
-    const source: DataSourceType = "facebook";
+  type FacebookOptions = { userName?: string };
+  const options: FacebookOptions = { userName };
 
-    // Build identity index for faster lookups
-    const identityIndex = await buildIdentityIndex();
-    const contactIdMap = new Map<string, string>();
-
-    // First, extract and create contacts
-    let contactsCreated = 0;
-    for await (const rawContact of extractFacebookContacts(exportPath, {
-      userName,
-    })) {
-      const contactId = await findOrCreateContact(rawContact, source);
-      const { normalized } = normalizeIdentifier(rawContact.identifier);
-      contactIdMap.set(normalized, contactId);
-      identityIndex.set(normalized, contactId);
-      contactsCreated++;
-    }
-
-    // Then, import messages in batches
-    let messagesImported = 0;
-    const messageBatch: Array<{
-      contactId: string;
-      source: DataSourceType;
-      type: "message" | "call" | "email";
-      sourceMessageId: string | null;
-      content: string | null;
-      direction: "inbound" | "outbound";
-      timestamp: Date;
-      metadata: Record<string, unknown>;
-    }> = [];
-
-    const lastInteractionMap = new Map<string, Date>();
-
-    for await (const rawMessage of parseFacebookExport(exportPath, {
-      userName,
-    })) {
-      const { normalized } = normalizeIdentifier(rawMessage.senderIdentifier);
-      let contactId = contactIdMap.get(normalized) || identityIndex.get(normalized);
-
-      if (!contactId) {
-        // Create contact on the fly
-        contactId = await findOrCreateContact(
-          {
-            identifier: rawMessage.senderIdentifier,
-            source,
-          },
-          source
-        );
-        contactIdMap.set(normalized, contactId);
-        identityIndex.set(normalized, contactId);
-      }
-
-      messageBatch.push({
-        contactId,
-        source,
-        type: rawMessage.type,
-        sourceMessageId: rawMessage.sourceId,
-        content: rawMessage.content,
-        direction: rawMessage.direction,
-        timestamp: rawMessage.timestamp,
-        metadata: rawMessage.metadata || {},
-      });
-
-      // Track last interaction
-      const existing = lastInteractionMap.get(contactId);
-      if (!existing || rawMessage.timestamp > existing) {
-        lastInteractionMap.set(contactId, rawMessage.timestamp);
-      }
-
-      // Batch insert every 500 messages
-      if (messageBatch.length >= 500) {
-        const count = await createMessages(messageBatch);
-        messagesImported += count;
-        messageBatch.length = 0;
-      }
-    }
-
-    // Insert remaining messages
-    if (messageBatch.length > 0) {
-      const count = await createMessages(messageBatch);
-      messagesImported += count;
-    }
-
-    // Batch update last interactions
-    if (lastInteractionMap.size > 0) {
-      await db.$transaction(
-        Array.from(lastInteractionMap.entries()).map(([id, timestamp]) =>
-          db.contact.update({
-            where: { id },
-            data: { lastInteraction: timestamp },
-          })
-        )
-      );
-    }
-
-    revalidatePath("/");
-    revalidatePath("/contacts");
-
-    return {
-      success: true,
-      messagesImported,
-      contactsCreated,
-    };
-  } catch (error) {
-    console.error("[import-facebook]", error);
-    return {
-      success: false,
-      messagesImported: 0,
-      contactsCreated: 0,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return executeImport<FacebookOptions>(
+    {
+      source: "facebook",
+      extractContacts: (path, opts) => extractFacebookContacts(path, opts),
+      parseMessages: (path, opts) => parseFacebookExport(path, opts),
+      logPrefix: "import-facebook",
+    },
+    exportPath,
+    options
+  );
 }
 
 /**
@@ -318,126 +289,23 @@ export async function importInstagram(
   exportPath: string,
   userName?: string
 ): Promise<ImportResult> {
-  // Validate file path to prevent arbitrary file access
-  validateFilePath(exportPath);
-
   const { parseInstagramExport, extractInstagramContacts } = await import(
     "@/lib/connectors/instagram/parser"
   );
 
-  try {
-    const source: DataSourceType = "instagram";
+  type InstagramOptions = { userName?: string };
+  const options: InstagramOptions = { userName };
 
-    // Build identity index for faster lookups
-    const identityIndex = await buildIdentityIndex();
-    const contactIdMap = new Map<string, string>();
-
-    // First, extract and create contacts
-    let contactsCreated = 0;
-    for await (const rawContact of extractInstagramContacts(exportPath, {
-      userName,
-    })) {
-      const contactId = await findOrCreateContact(rawContact, source);
-      const { normalized } = normalizeIdentifier(rawContact.identifier);
-      contactIdMap.set(normalized, contactId);
-      identityIndex.set(normalized, contactId);
-      contactsCreated++;
-    }
-
-    // Then, import messages in batches
-    let messagesImported = 0;
-    const messageBatch: Array<{
-      contactId: string;
-      source: DataSourceType;
-      type: "message" | "call" | "email";
-      sourceMessageId: string | null;
-      content: string | null;
-      direction: "inbound" | "outbound";
-      timestamp: Date;
-      metadata: Record<string, unknown>;
-    }> = [];
-
-    const lastInteractionMap = new Map<string, Date>();
-
-    for await (const rawMessage of parseInstagramExport(exportPath, {
-      userName,
-    })) {
-      const { normalized } = normalizeIdentifier(rawMessage.senderIdentifier);
-      let contactId = contactIdMap.get(normalized) || identityIndex.get(normalized);
-
-      if (!contactId) {
-        // Create contact on the fly
-        contactId = await findOrCreateContact(
-          {
-            identifier: rawMessage.senderIdentifier,
-            source,
-          },
-          source
-        );
-        contactIdMap.set(normalized, contactId);
-        identityIndex.set(normalized, contactId);
-      }
-
-      messageBatch.push({
-        contactId,
-        source,
-        type: rawMessage.type,
-        sourceMessageId: rawMessage.sourceId,
-        content: rawMessage.content,
-        direction: rawMessage.direction,
-        timestamp: rawMessage.timestamp,
-        metadata: rawMessage.metadata || {},
-      });
-
-      // Track last interaction
-      const existing = lastInteractionMap.get(contactId);
-      if (!existing || rawMessage.timestamp > existing) {
-        lastInteractionMap.set(contactId, rawMessage.timestamp);
-      }
-
-      // Batch insert every 500 messages
-      if (messageBatch.length >= 500) {
-        const count = await createMessages(messageBatch);
-        messagesImported += count;
-        messageBatch.length = 0;
-      }
-    }
-
-    // Insert remaining messages
-    if (messageBatch.length > 0) {
-      const count = await createMessages(messageBatch);
-      messagesImported += count;
-    }
-
-    // Batch update last interactions
-    if (lastInteractionMap.size > 0) {
-      await db.$transaction(
-        Array.from(lastInteractionMap.entries()).map(([id, timestamp]) =>
-          db.contact.update({
-            where: { id },
-            data: { lastInteraction: timestamp },
-          })
-        )
-      );
-    }
-
-    revalidatePath("/");
-    revalidatePath("/contacts");
-
-    return {
-      success: true,
-      messagesImported,
-      contactsCreated,
-    };
-  } catch (error) {
-    console.error("[import-instagram]", error);
-    return {
-      success: false,
-      messagesImported: 0,
-      contactsCreated: 0,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return executeImport<InstagramOptions>(
+    {
+      source: "instagram",
+      extractContacts: (path, opts) => extractInstagramContacts(path, opts),
+      parseMessages: (path, opts) => parseInstagramExport(path, opts),
+      logPrefix: "import-instagram",
+    },
+    exportPath,
+    options
+  );
 }
 
 /**

@@ -3,6 +3,7 @@ import { writeFile, mkdir } from "fs/promises";
 import { join, basename, extname } from "path";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
+import { verifyApiAuth, unauthorizedResponse } from "@/lib/auth";
 
 /**
  * Allowed file extensions per source type
@@ -53,6 +54,12 @@ function generateSecureFilename(originalName: string, source: string): string {
  * - chatName: (optional) Name of the chat (for WhatsApp)
  */
 export async function POST(request: NextRequest) {
+  // Verify authentication before processing any data
+  const auth = await verifyApiAuth(request);
+  if (!auth.authenticated) {
+    return unauthorizedResponse(auth.error);
+  }
+
   try {
     const formData = await request.formData();
 
