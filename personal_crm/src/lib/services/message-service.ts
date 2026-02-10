@@ -1,6 +1,17 @@
 import { db } from "@/lib/db";
 import { Message, dbRowToMessage, MessageSource } from "@/schemas/message.schema";
 
+const IN_QUERY_CHUNK_SIZE = 500;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (items.length === 0) return [];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 /**
  * Get messages for a contact
  */
@@ -86,8 +97,59 @@ export async function createMessages(
     metadata?: Record<string, unknown>;
   }>
 ): Promise<number> {
+  // Deduplicate within batch by source + sourceMessageId
+  const seen = new Set<string>();
+  const uniqueMessages = messages.filter((m) => {
+    if (!m.sourceMessageId) return true; // Allow messages without sourceMessageId
+    const key = `${m.source}:${m.sourceMessageId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (uniqueMessages.length === 0) return 0;
+
+  // Filter out messages that already exist in the database
+  const messagesWithSourceId = uniqueMessages.filter((m) => m.sourceMessageId);
+  const existingKeys = new Set<string>();
+
+  if (messagesWithSourceId.length > 0) {
+    const idsBySource = new Map<MessageSource, Set<string>>();
+    for (const message of messagesWithSourceId) {
+      const set = idsBySource.get(message.source) ?? new Set<string>();
+      set.add(message.sourceMessageId as string);
+      idsBySource.set(message.source, set);
+    }
+
+    for (const [source, idsSet] of idsBySource.entries()) {
+      const ids = Array.from(idsSet);
+      for (const chunk of chunkArray(ids, IN_QUERY_CHUNK_SIZE)) {
+        const existing = await db.message.findMany({
+          where: {
+            source,
+            sourceMessageId: { in: chunk },
+          },
+          select: { sourceMessageId: true },
+        });
+
+        for (const row of existing) {
+          if (row.sourceMessageId) {
+            existingKeys.add(`${source}:${row.sourceMessageId}`);
+          }
+        }
+      }
+    }
+  }
+
+  const filteredMessages = uniqueMessages.filter((m) => {
+    if (!m.sourceMessageId) return true;
+    return !existingKeys.has(`${m.source}:${m.sourceMessageId}`);
+  });
+
+  if (filteredMessages.length === 0) return 0;
+
   const result = await db.message.createMany({
-    data: messages.map((m) => ({
+    data: filteredMessages.map((m) => ({
       contactId: m.contactId,
       source: m.source,
       type: m.type,
@@ -101,6 +163,75 @@ export async function createMessages(
   });
 
   return result.count;
+}
+
+/**
+ * Get message counts by contact
+ */
+export async function getMessageCountsByContact(
+  contactIds: string[],
+  since?: Date
+): Promise<Record<string, number>> {
+  if (contactIds.length === 0) return {};
+
+  const counts: Record<string, number> = {};
+
+  // Chunk contactIds to avoid SQLite query parameter limit
+  for (const chunk of chunkArray(contactIds, IN_QUERY_CHUNK_SIZE)) {
+    const rows = await db.message.groupBy({
+      by: ["contactId"],
+      _count: { _all: true },
+      where: {
+        contactId: { in: chunk },
+        ...(since && { timestamp: { gte: since } }),
+      },
+    });
+
+    for (const row of rows) {
+      counts[row.contactId] = row._count._all;
+    }
+  }
+
+  return counts;
+}
+
+/**
+ * Get messages per week for the last N weeks
+ */
+export async function getMessageCadence(
+  weeks: number = 12
+): Promise<Array<{ start: Date; count: number }>> {
+  const now = new Date();
+  const start = new Date();
+  start.setDate(now.getDate() - weeks * 7);
+  start.setHours(0, 0, 0, 0);
+  const day = start.getDay();
+  const diff = (day + 6) % 7;
+  start.setDate(start.getDate() - diff);
+
+  const rows = await db.$queryRaw<
+    Array<{ week_start: string; count: number }>
+  >`SELECT strftime('%Y-%m-%d', timestamp, 'weekday 1', '-7 days') as week_start,
+      COUNT(*) as count
+    FROM Message
+    WHERE timestamp >= ${start.toISOString()}
+    GROUP BY week_start
+    ORDER BY week_start ASC`;
+
+  const countsByWeek = new Map<string, number>();
+  for (const row of rows) {
+    countsByWeek.set(row.week_start, row.count);
+  }
+
+  const results: Array<{ start: Date; count: number }> = [];
+  const cursor = new Date(start);
+  for (let i = 0; i < weeks; i++) {
+    const key = cursor.toISOString().slice(0, 10);
+    results.push({ start: new Date(cursor), count: countsByWeek.get(key) ?? 0 });
+    cursor.setDate(cursor.getDate() + 7);
+  }
+
+  return results;
 }
 
 /**
@@ -127,17 +258,21 @@ export async function getLatestMessagesPerContact(
 ): Promise<Record<string, Message>> {
   if (contactIds.length === 0) return {};
 
-  // Single query using distinct to get latest message per contact
-  const messages = await db.message.findMany({
-    where: { contactId: { in: contactIds } },
-    orderBy: { timestamp: "desc" },
-    distinct: ["contactId"],
-  });
-
   const result: Record<string, Message> = {};
-  for (const message of messages) {
-    result[message.contactId] = dbRowToMessage(message);
+
+  // Chunk contactIds to avoid SQLite query parameter limit
+  for (const chunk of chunkArray(contactIds, IN_QUERY_CHUNK_SIZE)) {
+    const messages = await db.message.findMany({
+      where: { contactId: { in: chunk } },
+      orderBy: { timestamp: "desc" },
+      distinct: ["contactId"],
+    });
+
+    for (const message of messages) {
+      result[message.contactId] = dbRowToMessage(message);
+    }
   }
+
   return result;
 }
 

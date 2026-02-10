@@ -6,11 +6,17 @@ import { Card } from "@/components/ui/card";
 import { RelationshipBadge } from "@/components/contacts/relationship-badge";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { ContactNotes } from "@/components/contacts/contact-notes";
+import { ActivityHeatmap } from "@/components/dashboard/activity-heatmap";
+import { EngagementBalance } from "@/components/contacts/engagement-balance";
 import { getContact } from "@/lib/services/contact-service";
 import {
   getContactMessages,
   getContactMessageStats,
 } from "@/lib/services/message-service";
+import {
+  getDailyMessageCounts,
+  getEngagementStats,
+} from "@/lib/services/analytics-service";
 import { formatRelativeTime, formatDate } from "@/lib/utils";
 import { getSourceIcon, getSourceLabel } from "@/schemas/message.schema";
 
@@ -26,9 +32,16 @@ export default async function ContactPage({ params }: ContactPageProps) {
     notFound();
   }
 
-  const [messages, stats] = await Promise.all([
+  // Heatmap date range: 1 year back from today
+  const heatmapEndDate = new Date();
+  const heatmapStartDate = new Date();
+  heatmapStartDate.setFullYear(heatmapStartDate.getFullYear() - 1);
+
+  const [messages, stats, heatmapData, engagementStats] = await Promise.all([
     getContactMessages(id, { limit: 100 }),
     getContactMessageStats(id),
+    getDailyMessageCounts(heatmapStartDate, heatmapEndDate, id),
+    getEngagementStats(id),
   ]);
 
   return (
@@ -52,6 +65,15 @@ export default async function ContactPage({ params }: ContactPageProps) {
             <RelationshipBadge score={contact.relationshipScore} />
           </div>
 
+          {/* Profile Info: Company, Job Title, City */}
+          {(contact.company || contact.jobTitle || contact.city) && (
+            <p className="text-warmGray-600 mt-1">
+              {[contact.jobTitle, contact.company, contact.city]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
+
           {/* Identities */}
           <div className="flex flex-wrap gap-2 mt-2">
             {contact.identities.map((identity, i) => (
@@ -59,7 +81,11 @@ export default async function ContactPage({ params }: ContactPageProps) {
                 key={i}
                 className="inline-flex items-center gap-1 text-sm text-warmGray-600 bg-warmGray-100 px-2 py-1"
               >
-                {identity.type === "phone" ? "📱" : "✉️"}
+                {identity.type === "phone"
+                  ? "📱"
+                  : identity.type === "email"
+                    ? "✉️"
+                    : "👥"}
                 {identity.value}
               </span>
             ))}
@@ -68,7 +94,7 @@ export default async function ContactPage({ params }: ContactPageProps) {
           {/* Tags */}
           {contact.tags.length > 0 && (
             <div className="flex gap-1 mt-3">
-              {contact.tags.map((tag) => (
+              {contact.tags.map(tag => (
                 <span
                   key={tag}
                   className="px-2 py-0.5 text-sm font-medium bg-sage/20 text-sage border border-sage/30"
@@ -86,6 +112,14 @@ export default async function ContactPage({ params }: ContactPageProps) {
         </div>
       </div>
 
+      {/* Activity Heatmap - Full Width */}
+      <Card>
+        <h2 className="font-display text-xl font-bold text-warmGray-900 mb-4">
+          Activity Over Time
+        </h2>
+        <ActivityHeatmap data={heatmapData} weeks={52} />
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left column - Timeline */}
         <div className="lg:col-span-2 space-y-6">
@@ -99,6 +133,22 @@ export default async function ContactPage({ params }: ContactPageProps) {
 
         {/* Right column - Stats & Notes */}
         <div className="space-y-6">
+          {/* Engagement Balance */}
+          <Card>
+            <h3 className="font-display font-bold text-warmGray-900 mb-4">
+              Engagement
+            </h3>
+            <EngagementBalance
+              sent={engagementStats.messagesSent}
+              received={engagementStats.messagesReceived}
+            />
+            {engagementStats.avgWordsPerMessage > 0 && (
+              <p className="text-sm text-warmGray-500 mt-3">
+                Avg. {engagementStats.avgWordsPerMessage} words per message
+              </p>
+            )}
+          </Card>
+
           {/* Stats */}
           <Card>
             <h3 className="font-display font-bold text-warmGray-900 mb-4">
@@ -107,15 +157,17 @@ export default async function ContactPage({ params }: ContactPageProps) {
             <dl className="space-y-3">
               <div className="flex justify-between">
                 <dt className="text-warmGray-600">Total Messages</dt>
-                <dd className="font-display font-bold">{stats.total}</dd>
+                <dd className="font-display font-bold">
+                  {stats.total.toLocaleString()}
+                </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-warmGray-600">Sent</dt>
-                <dd className="font-display">{stats.outbound}</dd>
+                <dd className="font-display">{stats.outbound.toLocaleString()}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-warmGray-600">Received</dt>
-                <dd className="font-display">{stats.inbound}</dd>
+                <dd className="font-display">{stats.inbound.toLocaleString()}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-warmGray-600">Last Contact</dt>

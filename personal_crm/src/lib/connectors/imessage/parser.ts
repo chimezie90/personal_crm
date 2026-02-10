@@ -13,6 +13,11 @@ export interface IMessageRow {
   service: string;
   handle_id: string | null;
   handle_service: string | null;
+  chat_rowid: number | null;
+  chat_guid: string | null;
+  chat_identifier: string | null;
+  chat_display_name: string | null;
+  chat_handle_count: number | null;
 }
 
 /**
@@ -30,7 +35,19 @@ export interface IHandleRow {
  */
 export function parseMessageRow(row: IMessageRow): RawMessage | null {
   // Skip messages without content or handle
-  if (!row.content || !row.handle_id) {
+  if (!row.content) {
+    return null;
+  }
+
+  const chatHandleCount = row.chat_handle_count ?? 0;
+  const isGroup = chatHandleCount > 1;
+  const chatKey =
+    row.chat_identifier ||
+    row.chat_guid ||
+    row.chat_display_name ||
+    (row.chat_rowid ? String(row.chat_rowid) : null);
+
+  if (!isGroup && !row.handle_id) {
     return null;
   }
 
@@ -39,11 +56,19 @@ export function parseMessageRow(row: IMessageRow): RawMessage | null {
     content: row.content,
     timestamp: macAbsoluteTimeToDate(row.date),
     direction: row.is_from_me === 1 ? "outbound" : "inbound",
-    senderIdentifier: row.handle_id,
+    senderIdentifier: isGroup
+      ? `group:${chatKey ?? "unknown"}`
+      : (row.handle_id as string),
     type: "message",
     metadata: {
       service: row.service,
       handleService: row.handle_service,
+      isGroup,
+      chatIdentifier: row.chat_identifier,
+      chatGuid: row.chat_guid,
+      chatDisplayName: row.chat_display_name,
+      chatRowId: row.chat_rowid,
+      chatHandleCount,
     },
   };
 }
@@ -57,34 +82,4 @@ export function parseHandleRow(row: IHandleRow): RawContact {
     displayName: undefined, // iMessage doesn't store display names in chat.db
     source: "imessage",
   };
-}
-
-/**
- * Normalize a phone number or email identifier
- */
-export function normalizeIdentifier(identifier: string): string {
-  // Check if it's an email
-  if (identifier.includes("@")) {
-    return identifier.toLowerCase().trim();
-  }
-
-  // It's a phone number - normalize it
-  // Remove all non-numeric characters except +
-  const cleaned = identifier.replace(/[^\d+]/g, "");
-
-  // Handle international prefixes
-  // Remove leading + and country code 1 for US numbers
-  if (cleaned.startsWith("+1") && cleaned.length === 12) {
-    return cleaned.slice(2);
-  }
-  if (cleaned.startsWith("1") && cleaned.length === 11) {
-    return cleaned.slice(1);
-  }
-
-  // For other formats, just return the last 10 digits if available
-  if (cleaned.length >= 10) {
-    return cleaned.slice(-10);
-  }
-
-  return cleaned;
 }

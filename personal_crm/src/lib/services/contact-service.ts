@@ -14,7 +14,7 @@ export async function getContacts(options?: {
   search?: string;
   limit?: number;
   offset?: number;
-  orderBy?: "relationshipScore" | "lastInteraction" | "displayName";
+  orderBy?: "relationshipScore" | "lastInteraction" | "displayName" | "messageCount";
   orderDir?: "asc" | "desc";
 }): Promise<Contact[]> {
   const {
@@ -26,17 +26,51 @@ export async function getContacts(options?: {
     orderDir = "desc",
   } = options || {};
 
+  const whereClause = {
+    archived,
+    ...(search && {
+      OR: [
+        { displayName: { contains: search } },
+        { identities: { contains: search } },
+        { notes: { contains: search } },
+      ],
+    }),
+  };
+
+  if (orderBy === "messageCount") {
+    const contacts = await db.contact.findMany({
+      where: whereClause,
+    });
+
+    const ids = contacts.map(contact => contact.id);
+    const countMap = new Map<string, number>();
+
+    // Chunk ids to avoid SQLite query parameter limit
+    const chunkSize = 500;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const counts = await db.message.groupBy({
+        by: ["contactId"],
+        _count: { _all: true },
+        where: { contactId: { in: chunk } },
+      });
+
+      for (const row of counts) {
+        countMap.set(row.contactId, row._count._all);
+      }
+    }
+
+    const sorted = contacts.sort((a, b) => {
+      const aCount = countMap.get(a.id) ?? 0;
+      const bCount = countMap.get(b.id) ?? 0;
+      return orderDir === "asc" ? aCount - bCount : bCount - aCount;
+    });
+
+    return sorted.slice(offset, offset + limit).map(dbRowToContact);
+  }
+
   const contacts = await db.contact.findMany({
-    where: {
-      archived,
-      ...(search && {
-        OR: [
-          { displayName: { contains: search } },
-          { identities: { contains: search } },
-          { notes: { contains: search } },
-        ],
-      }),
-    },
+    where: whereClause,
     orderBy: { [orderBy]: orderDir },
     take: limit,
     skip: offset,

@@ -55,17 +55,3 @@ export function createConnector(
     );
   }
 }
-
-/**
- * Get list of registered connector types
- */
-export function getRegisteredTypes(): DataSourceType[] {
-  return Array.from(connectorFactories.keys());
-}
-
-/**
- * Check if a connector type is registered
- */
-export function isTypeRegistered(type: DataSourceType): boolean {
-  return connectorFactories.has(type);
-}

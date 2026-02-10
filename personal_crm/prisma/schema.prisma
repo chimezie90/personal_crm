@@ -8,21 +8,35 @@ datasource db {
 }
 
 model Contact {
-  id                String    @id @default(cuid())
-  displayName       String
-  photoUrl          String?
-  relationshipScore Float     @default(50)
-  lastInteraction   DateTime?
-  identities        String    @default("[]") // JSON array of {type, value} objects
-  tags              String    @default("[]") // JSON array of strings
-  notes             String?
-  archived          Boolean   @default(false)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                   String    @id @default(cuid())
+  displayName          String
+  photoUrl             String?
+
+  // Profile fields (manual entry)
+  company              String?
+  jobTitle             String?
+  city                 String?
+  metadata             String    @default("{}") // JSON: { college, linkedIn, twitter, website }
+
+  // Relationship tracking
+  relationshipScore    Float     @default(50)
+  relationshipStrength String    @default("new") // strong, moderate, weak, new
+  lastInteraction      DateTime?
+  identities           String    @default("[]") // JSON array of {type, value} objects
+  tags                 String    @default("[]") // JSON array of strings
+  notes                String?
+  archived             Boolean   @default(false)
+
+  // Score breakdown for analytics (3 components)
+  scoreBreakdown       String    @default("{}") // JSON: { recency, frequency, balance }
+
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   messages Message[]
 
   @@index([relationshipScore(sort: Desc)])
+  @@index([relationshipStrength])
   @@index([lastInteraction(sort: Desc)])
   @@index([archived])
 }
@@ -40,6 +54,11 @@ model Message {
   sentimentLabel  String?   // positive, negative, neutral
   timestamp       DateTime
   metadata        String    @default("{}") // JSON object
+
+  // Analytics fields for fast aggregations
+  timestampDate   String?   // YYYY-MM-DD format for heatmap queries
+  wordCount       Int?      // For engagement analytics
+
   createdAt       DateTime  @default(now())
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -48,6 +67,8 @@ model Message {
   @@index([contactId, timestamp(sort: Desc)])
   @@index([source])
   @@index([timestamp(sort: Desc)])
+  @@index([timestampDate])
+  @@index([contactId, timestampDate])
 }
 
 model SyncState {

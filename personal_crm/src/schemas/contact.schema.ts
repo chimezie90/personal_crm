@@ -1,18 +1,29 @@
 import { z } from "zod";
 
 export const identitySchema = z.object({
-  type: z.enum(["phone", "email"]),
+  type: z.enum(["phone", "email", "group", "social"]),
   value: z.string(),
-  source: z.enum(["imessage", "whatsapp", "facebook", "email", "phone"]),
+  source: z.enum(["imessage", "whatsapp", "facebook", "instagram", "email", "phone"]),
 });
 
 export type Identity = z.infer<typeof identitySchema>;
+
+export const relationshipStrengthSchema = z.enum(["strong", "moderate", "weak", "new"]);
+
+export type RelationshipStrength = z.infer<typeof relationshipStrengthSchema>;
 
 export const contactSchema = z.object({
   id: z.string(),
   displayName: z.string(),
   photoUrl: z.string().nullable(),
+
+  // Profile fields
+  company: z.string().nullable(),
+  jobTitle: z.string().nullable(),
+  city: z.string().nullable(),
+
   relationshipScore: z.number().min(0).max(100),
+  relationshipStrength: relationshipStrengthSchema,
   lastInteraction: z.date().nullable(),
   identities: z.array(identitySchema),
   tags: z.array(z.string()),
@@ -52,7 +63,8 @@ export function parseIdentities(json: string): Identity[] {
   try {
     const parsed = JSON.parse(json);
     return z.array(identitySchema).parse(parsed);
-  } catch {
+  } catch (error) {
+    console.warn(`[parseIdentities] Failed to parse JSON: ${json.slice(0, 100)}...`, error);
     return [];
   }
 }
@@ -64,7 +76,8 @@ export function parseTags(json: string): string[] {
   try {
     const parsed = JSON.parse(json);
     return z.array(z.string()).parse(parsed);
-  } catch {
+  } catch (error) {
+    console.warn(`[parseTags] Failed to parse JSON: ${json.slice(0, 100)}...`, error);
     return [];
   }
 }
@@ -76,7 +89,11 @@ export function dbRowToContact(row: {
   id: string;
   displayName: string;
   photoUrl: string | null;
+  company?: string | null;
+  jobTitle?: string | null;
+  city?: string | null;
   relationshipScore: number;
+  relationshipStrength: string;
   lastInteraction: Date | null;
   identities: string;
   tags: string;
@@ -89,7 +106,11 @@ export function dbRowToContact(row: {
     id: row.id,
     displayName: row.displayName,
     photoUrl: row.photoUrl,
+    company: row.company ?? null,
+    jobTitle: row.jobTitle ?? null,
+    city: row.city ?? null,
     relationshipScore: row.relationshipScore,
+    relationshipStrength: relationshipStrengthSchema.parse(row.relationshipStrength),
     lastInteraction: row.lastInteraction,
     identities: parseIdentities(row.identities),
     tags: parseTags(row.tags),

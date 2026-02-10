@@ -1,15 +1,25 @@
 import { db } from "@/lib/db";
+import { PrismaClient } from "@/generated/prisma/client";
 import { normalizePhoneNumber, normalizeEmail } from "@/lib/utils";
 import { Identity, parseIdentities, dbRowToContact } from "@/schemas/contact.schema";
 import { RawContact, DataSourceType } from "@/lib/connectors/types";
+
+// Transaction client type for Prisma
+type TransactionClient = Omit<
+  PrismaClient,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
+>;
 
 /**
  * Normalize an identifier (phone or email) for matching
  */
 export function normalizeIdentifier(identifier: string): {
-  type: "phone" | "email";
+  type: "phone" | "email" | "group";
   normalized: string;
 } {
+  if (identifier.startsWith("group:")) {
+    return { type: "group", normalized: identifier.slice("group:".length) };
+  }
   if (identifier.includes("@")) {
     return { type: "email", normalized: normalizeEmail(identifier) };
   }
@@ -19,14 +29,17 @@ export function normalizeIdentifier(identifier: string): {
 /**
  * Find an existing contact that matches the given raw contact
  * Uses deterministic matching on phone/email
+ * @param rawContact - The raw contact data to match against
+ * @param client - Optional transaction client, defaults to db
  */
 export async function findMatchingContact(
-  rawContact: RawContact
+  rawContact: RawContact,
+  client: TransactionClient = db
 ): Promise<string | null> {
   const { normalized } = normalizeIdentifier(rawContact.identifier);
 
   // Search through all contacts for a matching identity
-  const contacts = await db.contact.findMany({
+  const contacts = await client.contact.findMany({
     where: {
       identities: { contains: normalized },
     },
@@ -42,48 +55,56 @@ export async function findMatchingContact(
 
 /**
  * Find or create a contact for the given raw contact data
+ * Uses a transaction to prevent race conditions that could create duplicate contacts
  */
 export async function findOrCreateContact(
   rawContact: RawContact,
   source: DataSourceType
 ): Promise<string> {
-  const existingId = await findMatchingContact(rawContact);
+  return db.$transaction(async (tx) => {
+    const existingId = await findMatchingContact(rawContact, tx);
 
-  if (existingId) {
-    // Update the contact with any new identities
-    await addIdentityToContact(existingId, rawContact.identifier, source);
-    return existingId;
-  }
+    if (existingId) {
+      // Update the contact with any new identities
+      await addIdentityToContact(existingId, rawContact.identifier, source, tx);
+      return existingId;
+    }
 
-  // Create a new contact
-  const { type, normalized } = normalizeIdentifier(rawContact.identifier);
-  const identity: Identity = {
-    type,
-    value: normalized,
-    source,
-  };
+    // Create a new contact
+    const { type, normalized } = normalizeIdentifier(rawContact.identifier);
+    const identity: Identity = {
+      type,
+      value: normalized,
+      source,
+    };
 
-  const contact = await db.contact.create({
-    data: {
-      displayName: rawContact.displayName || normalized,
-      photoUrl: rawContact.photoUrl ?? null,
-      identities: JSON.stringify([identity]),
-      tags: "[]",
-    },
+    const contact = await tx.contact.create({
+      data: {
+        displayName: rawContact.displayName || normalized,
+        photoUrl: rawContact.photoUrl ?? null,
+        identities: JSON.stringify([identity]),
+        tags: "[]",
+      },
+    });
+
+    return contact.id;
   });
-
-  return contact.id;
 }
 
 /**
  * Add a new identity to an existing contact if not already present
+ * @param contactId - The ID of the contact to update
+ * @param identifier - The identifier to add (phone, email, or group)
+ * @param source - The data source type
+ * @param client - Optional transaction client, defaults to db
  */
 export async function addIdentityToContact(
   contactId: string,
   identifier: string,
-  source: DataSourceType
+  source: DataSourceType,
+  client: TransactionClient = db
 ): Promise<void> {
-  const contact = await db.contact.findUnique({
+  const contact = await client.contact.findUnique({
     where: { id: contactId },
   });
 
@@ -102,7 +123,7 @@ export async function addIdentityToContact(
   // Add the new identity
   identities.push({ type, value: normalized, source });
 
-  await db.contact.update({
+  await client.contact.update({
     where: { id: contactId },
     data: { identities: JSON.stringify(identities) },
   });
@@ -164,50 +185,6 @@ export async function mergeContacts(
     // Delete the source contact
     await tx.contact.delete({ where: { id: sourceId } });
   });
-}
-
-/**
- * Find potential duplicate contacts
- * Returns pairs of contacts that might be duplicates
- */
-export async function findPotentialDuplicates(): Promise<
-  Array<{ contactA: string; contactB: string; reason: string }>
-> {
-  const duplicates: Array<{ contactA: string; contactB: string; reason: string }> =
-    [];
-
-  const contacts = await db.contact.findMany({
-    where: { archived: false },
-  });
-
-  // Build a map of normalized identifiers to contact IDs
-  const identityMap = new Map<string, string[]>();
-
-  for (const contact of contacts) {
-    const identities = parseIdentities(contact.identities);
-    for (const identity of identities) {
-      const key = `${identity.type}:${identity.value}`;
-      const existing = identityMap.get(key) || [];
-      existing.push(contact.id);
-      identityMap.set(key, existing);
-    }
-  }
-
-  // Find any identities that map to multiple contacts
-  for (const [key, ids] of identityMap.entries()) {
-    if (ids.length > 1) {
-      // Mark these as potential duplicates
-      for (let i = 0; i < ids.length - 1; i++) {
-        duplicates.push({
-          contactA: ids[i],
-          contactB: ids[i + 1],
-          reason: `Shared identity: ${key}`,
-        });
-      }
-    }
-  }
-
-  return duplicates;
 }
 
 /**
