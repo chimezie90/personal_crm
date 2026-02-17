@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
+const HMAC_KEY = "human-lives-auth";
+
+/** HMAC-based comparison avoids leaking input length via early return */
 function safeCompare(a: string, b: string): boolean {
-  try {
-    const bufA = Buffer.from(a);
-    const bufB = Buffer.from(b);
-    if (bufA.length !== bufB.length) return false;
-    return timingSafeEqual(bufA, bufB);
-  } catch {
-    return false;
-  }
+  const hmacA = createHmac("sha256", HMAC_KEY).update(a).digest();
+  const hmacB = createHmac("sha256", HMAC_KEY).update(b).digest();
+  return timingSafeEqual(hmacA, hmacB);
 }
 
 export function middleware(request: NextRequest) {

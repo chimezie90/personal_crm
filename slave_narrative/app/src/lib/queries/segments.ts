@@ -11,13 +11,6 @@ export function getSegmentsByNarrative(narrativeId: number): Segment[] {
   return rows.map(parseSegmentRow);
 }
 
-export function getSegmentById(id: number): Segment | undefined {
-  const row = db
-    .prepare(`SELECT * FROM segments WHERE id = ?`)
-    .get(id) as SegmentRow | undefined;
-  return row ? parseSegmentRow(row) : undefined;
-}
-
 export function getSegmentsByIds(ids: number[]): Segment[] {
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(",");
@@ -29,10 +22,15 @@ export function getSegmentsByIds(ids: number[]): Segment[] {
   return rows.map(parseSegmentRow);
 }
 
-/** Sanitize FTS5 queries to prevent injection */
+/** Sanitize FTS5 queries: strip operators and quote each token */
 function sanitizeFtsQuery(raw: string): string {
-  // Strip special FTS5 operators, keep only alphanumeric + spaces
-  return raw.replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+  const stripped = raw.replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+  if (!stripped) return "";
+  // Quote each token to prevent implicit boolean operators (AND, OR, NOT)
+  return stripped
+    .split(/\s+/)
+    .map((t) => `"${t}"`)
+    .join(" ");
 }
 
 export function searchSegments(

@@ -56,14 +56,14 @@ export default async function EpisodePage({ params }: EpisodePageProps) {
       ...beat,
       resolvedSegments: beat.segment_ids
         .map((id) => segmentMap.get(id))
-        .filter(Boolean)
+        .filter((seg): seg is NonNullable<typeof seg> => seg != null)
         .map((seg) => ({
-          id: seg!.id,
-          text: seg!.text,
-          type: seg!.type,
-          narrativeId: seg!.narrative_id,
-          segmentIndex: seg!.segment_index,
-          narrativeTitle: narrativeMap.get(seg!.narrative_id) || "Unknown",
+          id: seg.id,
+          text: seg.text,
+          type: seg.type,
+          narrativeId: seg.narrative_id,
+          segmentIndex: seg.segment_index,
+          narrativeTitle: narrativeMap.get(seg.narrative_id) || "Unknown",
         })),
     }));
 

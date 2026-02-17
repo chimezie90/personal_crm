@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { Scrollama, Step } from "react-scrollama";
 
@@ -49,12 +49,9 @@ export default function EpisodePlayer({ episode, beats }: EpisodePlayerProps) {
     episode.contentWarnings.length === 0
   );
 
-  const onStepEnter = useCallback(
-    ({ data }: { data: number }) => {
-      setCurrentBeatIndex(data);
-    },
-    []
-  );
+  const onStepEnter = ({ data }: { data: number }) => {
+    setCurrentBeatIndex(data);
+  };
 
   if (!hasStarted) {
     return (

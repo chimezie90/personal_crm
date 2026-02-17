@@ -11,13 +11,6 @@ export function listPublishedEpisodes(): Episode[] {
   return rows.map(parseEpisodeRow);
 }
 
-export function listAllEpisodes(): Episode[] {
-  const rows = db
-    .prepare(`SELECT * FROM episodes ORDER BY created_at DESC`)
-    .all() as EpisodeRow[];
-  return rows.map(parseEpisodeRow);
-}
-
 export function getEpisodeBySlug(slug: string): Episode | undefined {
   const row = db
     .prepare(`SELECT * FROM episodes WHERE slug = ?`)
@@ -25,9 +18,3 @@ export function getEpisodeBySlug(slug: string): Episode | undefined {
   return row ? parseEpisodeRow(row) : undefined;
 }
 
-export function getEpisodeById(id: number): Episode | undefined {
-  const row = db
-    .prepare(`SELECT * FROM episodes WHERE id = ?`)
-    .get(id) as EpisodeRow | undefined;
-  return row ? parseEpisodeRow(row) : undefined;
-}

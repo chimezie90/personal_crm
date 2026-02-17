@@ -34,12 +34,6 @@ export const SegmentRangeSchema = z.object({
   end_index: z.number(),
 });
 
-export const EntityTagSchema = z.object({
-  text: z.string(),
-  type: z.enum(["person", "place", "organization"]),
-  entity_id: z.number().optional(),
-});
-
 export const BeatSchema = z.object({
   id: z.string(),
   order: z.number(),
@@ -48,7 +42,6 @@ export const BeatSchema = z.object({
   context_card: z
     .object({ title: z.string(), content: z.string() })
     .optional(),
-  entity_tags: z.array(EntityTagSchema).optional(),
   lens_tags: z.array(z.enum(HUMANITY_LENSES)).optional(),
   citation: z.object({
     narrative_id: z.number(),
@@ -60,7 +53,6 @@ export const BeatSchema = z.object({
 
 export type Beat = z.infer<typeof BeatSchema>;
 export type SegmentRange = z.infer<typeof SegmentRangeSchema>;
-export type EntityTag = z.infer<typeof EntityTagSchema>;
 
 // ---- Raw DB Row Types (what better-sqlite3 returns) ----
 
@@ -132,10 +124,12 @@ export interface Episode
 
 // ---- Serialization boundary ----
 
+const StringArraySchema = z.array(z.string());
+
 export function parseNarrativeRow(row: NarrativeRow): Narrative {
   return {
     ...row,
-    subjects: JSON.parse(row.subjects) as string[],
+    subjects: StringArraySchema.parse(JSON.parse(row.subjects)),
     pub_year_approximate: row.pub_year_approximate === 1,
   };
 }
@@ -145,13 +139,16 @@ export function parseEpisodeRow(row: EpisodeRow): Episode {
   const beats = rawBeats.map((b) => BeatSchema.parse(b));
   return {
     ...row,
-    theme_tags: JSON.parse(row.theme_tags) as string[],
-    content_warnings: JSON.parse(row.content_warnings) as string[],
+    theme_tags: StringArraySchema.parse(JSON.parse(row.theme_tags)),
+    content_warnings: StringArraySchema.parse(JSON.parse(row.content_warnings)),
     beats,
     published: row.published === 1,
   };
 }
 
 export function parseSegmentRow(row: SegmentRow): Segment {
+  if (!SEGMENT_TYPES.includes(row.type as SegmentType)) {
+    throw new Error(`Unknown segment type: ${row.type}`);
+  }
   return row as Segment;
 }
